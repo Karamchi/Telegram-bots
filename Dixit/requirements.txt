@@ -1,0 +1,5 @@
+Flask
+PyTelegramBotAPI
+python-dotenv
+jsonpickle
+Pillow

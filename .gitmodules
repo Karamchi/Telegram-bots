@@ -1,0 +1,3 @@
+[submodule "WittyBot"]
+	path = WittyBot
+	url = https://github.com/Karamchi/WittyBot

@@ -1,16 +1,20 @@
 const schedule = require('node-schedule')
 const Telegraf = require('telegraf')
 const fs = require('fs');
-var groups = {}
+const msg = require('./sendMessage')
+const gm = require('./groups');
+const su = require('./stringUtils');
+const strings = require('./strings-es');
+const TOTAL_TIME = 16*60
 
 const bot = new Telegraf(process.env.TOKEN)
+msg.setBot(bot)
 //var GRUPO = -305320173
 //var phase = 0
 // 0 = No game
 // 1 = Thinking word
 // 2 = Playing
 var status = {}
-//var path = undefined
 //answers: para cada definición, quién la mandó y el id para reenviar
 //awaiting: para cada persona que mandó una palabra y no la definición, la palabra que mandó y el id para reenviar
 
@@ -19,86 +23,120 @@ bot.start((ctx) => {
     })
 
 bot.on('new_chat_members', (ctx) => {
+    gm.onNewChatMembers(ctx)
     if (ctx.message.new_chat_participant.id == 504979973) {
-        bot.telegram.sendMessage(-258588711, "Added to group " + ctx.message.chat.id) //Test
+        sendMessage(-258588711, "Added to group " + ctx.message.chat.id) //Test
         ctx.reply("Hi! use /newgame to start a new game or /help to learn how to use me")
-    } else {
-        saveRelation(ctx.message.new_chat_participant.id, ctx.message.chat.id)
-    }
+    }     
 })
 
-var toAscii = function(str) {
-        return str.toLowerCase()
-        .replace(/á/, 'a')
-        .replace(/é/, 'e')
-        .replace(/í/, 'i')
-        .replace(/ó/, 'o')
-        .replace(/ú/, 'u')
-        .replace(/ü/, 'u')
-        .replace(/¿/, '?')
-        .replace(/\./, '')
-}
+bot.hears(['/help','/about@contact_game_bot'], (ctx) => {
+  for (var st in strings.help)
+    reply(ctx, strings.help[st])
+})
 
-bot.on('text', (ctx) => {
-    //console.log(ctx.message.chat)
-    //path = process.cwd();
-    //console.log(ctx.message)
-    var msgtext = toAscii(ctx.message.text)
-    if (msgtext == "/help") {
-      ctx.reply("Aprender a jugar al contacto es como pelar una naranja")
-      ctx.reply("/about: Más información")
-      ctx.reply("/help_game: Cómo jugar al contacto")
-      ctx.reply("/help_bot: Cómo usar el bot para jugar al contacto")
+bot.hears(['/about','/about@contact_game_bot'], (ctx) => {
+  for (var st in strings.about)
+    reply(ctx, strings.about[st])
+})
+
+bot.hears(['/help_game','/help_game@contact_game_bot'], (ctx) => {
+  for (var st in strings.help_game)
+    reply(ctx, strings.help_game[st])
+})
+
+bot.hears(['/help_bot','/help_bot@contact_game_bot'], (ctx) => {
+  for (var st in strings.help_game)
+    reply(ctx, strings.help_bot[st])
+})
+
+bot.hears('/stats', ctx => {
+  var buffer = fs.readFileSync("./record.txt", 'utf8');
+  try {
+    var x = buffer.split('\n')
+    var ps = {}
+    var as = {}
+    var b1s = {}
+    var b2s = {}
+    var defs = {}
+    for (var i in x) {
+      var line = x[i]
+      if (line == null) continue
+      var g = line[0] == "-" 
+      if (line.includes("atch")) {
+        if (line.includes("No")) {
+          var p = line.split(" ")[4 + g]
+          var a = line.split(" ")[6 + g]
+          if (as[p] == undefined) ps[p] = [0, 0]
+          if (as[a] == undefined) as[a] = [0, 0]
+          ps[p][1] += 1
+          as[a][1] += 1
+        } else {
+          var p = line.split(" ")[3 + g]
+          var a = line.split(" ")[5 + g]
+          if (ps[p] == undefined) ps[p] = [0, 0]
+          if (as[a] == undefined) as[a] = [0, 0]
+          ps[p][0] += 1
+          as[a][0] += 1
+        }
+        
+      } else if (line.includes("burn")) {
+        var p = line.split(" ")[0 + g]
+        if (b1s[p] == undefined) b1s[p] = 0
+        b1s[p] += 1
+        var a = line.split(" ")[5 + g]
+        if (b2s[a] == undefined) b2s[a] = 0
+        b2s[a] += 1
+      } else {
+        var p = line.split(" ")[0 + g].replace(":", "")
+        if (defs[p] == undefined) defs[p] = 0
+        defs[p] += 1
+      }
     }
-    if (msgtext == "/about") {
-      ctx.reply("Bot by Espi el Neta")
-      ctx.reply("Version 1.0.0 - June 2019")
-      ctx.reply("Hosted for free in glitch.com")
-    }
-    if (msgtext.includes("/help_game")) {
-      ctx.replyWithMarkdown(["El objetivo del juego es encontrar una palabra",
-      "La palabra la piensa un jugador al que vamos a llamar 'thinker' y dice la primera letra",
-      "El resto de los jugadores tienen que decir *definiciones* de palabras que empiecen con esa letra",
-      "Cuando uno de los jugadores cree que conoce la palabra que se corresponde con una definición, dice 'contacto'",
-      "Ambos cuentan, 1, 2, 3 y dicen (a la vez) la palabra que están pensando",
-      "Si dicen la misma palabra, el 'thinker' tiene que dar una letra más de la palabra que había pensado originalmente.",
-      "Si el thinker dice la palabra definida en cualquier momento (o sea, antes o después del contacto), quema la palabra, que no se puede volver a usar",
-      "El juego termina cuando alguien encuentra la palabra original, que no puede ser quemada. Cuando eso ocurre se puede jugar de vuelta, cambiando el thinker"
-      ].join(".\n"))           
-    }
-    if (msgtext.includes("/help_bot")) {
-      ctx.replyWithMarkdown(["El bot es una especie de arbitro que permite jugar a este juego a distancia en un grupo de tg",
-      "En vez de tener las palabras en la cabeza, los jugadores se las dicen por privado al bot, y él se encarga de reenviar lo que sea necesario al grupo",
-      "Para mandar una definición, se manda primero la palabra, después la definición",
-      "El comando /newgame inicia el juego",
-      "El comando /contacto equivale a decir CONTACTO",
-      "Sólo se puede tener una definición pendiente por vez, que es la última que se mandó",
-      "Sólo el que manda /contacto debe adivinar la palabra definida, lo que diga el resto de los participantes es ignorado.",
-      "Durante un contacto, no se pueden mandar definiciones",
-      "Si se agrega una nueva letra, se invalidan todas las palabras a medio definir",
-      "El bot tiene un timer que termina el juego con victoria del thinker si pasan 15 minutos",
-      "Normalmente, decir dos palabras de la misma familia es como decir la misma palabra. Esto es dificil de implementar en el bot, que por el momento sólo es plural-insensitive.",
-      "El bot soporta hasta un juego _activo_ por usuario. Si el mismo usuario está en más de un grupo que está jugando a la vez, no puede mandar mensajes privados al bot, ya que no está implementado cómo saber a qué juego reenviarlos."
-      ].join(".\n"))
-    }
+    
+    console.log("Estadísticas adivinando palabras: ")
+    for (var i in as)
+      console.log(""+ i + ": " + (as[i][0] + as[i][1]) + " contactos, " + as[i][0] / (as[i][0] + as[i][1]) + " aciertos" )
+    for (var i in b2s)
+      console.log(""+ i + ": palabras quemadas: " + b1s[i])
+    
+    console.log("Estadísticas definiendo palabras: ")
+    
+    for (var i in defs)
+      console.log(""+ i + " palabras definidas: " + defs[i])
+    for (var i in ps)
+      console.log(""+ i + ": " + (ps[i][0] + ps[i][1]) + " contactos, " + ps[i][0] / (ps[i][0] + ps[i][1]) + " aciertos" )
+    for (var i in b1s)
+      console.log(""+ i + ": palabras quemadas: " + b2s[i])
+    
+  } catch (error) {
+    console.log(error)
+  }
+})
+
+bot.on('text', ctx => onText(ctx))
   
-    if (Object.keys(status).length == 0) {
+var onText = (ctx) => {  
+    //console.log(ctx.message)
+    var msgtext = su.toAscii(ctx.message.text)
+  
+    console.log(msgtext)
+    if (Object.keys(status).length == 0)
       restore()
-    }
     
     var GRUPO = undefined
     if (ctx.message.chat.type != "private") {
-      saveRelation(ctx.message.from.id, ctx.message.chat.id)
+      gm.saveRelation(ctx.message.from.id, ctx.message.chat.id)
       GRUPO = ctx.message.chat.id
       //console.log(!GRUPO in status)
     } else {
-      var ag = activeGroups(ctx.message.from.id)
+      var ag = desambiguar(ctx.message.from.id, msgtext)
       if (ag.length == 0) {
         return
       } else if (ag.length == 1) {
         GRUPO = ag[0]
       } else {
-        ctx.reply("There is more than one active group for your user")
+        reply("There is more than one active group for your user")
         return
       }
     }
@@ -110,8 +148,10 @@ bot.on('text', (ctx) => {
         status = {}
     }
     if (msgtext.includes("/newgame") && ctx.message.chat.type != "private") {
-        if (!(GRUPO in status) || status[GRUPO].phase == 0) {
+        if (!(GRUPO in status) || status[GRUPO].phase != 2) {
           status[GRUPO] = new juego(GRUPO)
+        } else {
+          sendMessage(GRUPO, "You have to finish the current game first. Use /status to check the current progress or /ff to end the game if you are the thinker")
         }
         
         /*if (ctx.message.chat.type == "group" && status[GRUPO].phase != 0 && ctx.message.chat.id != GRUPO) {
@@ -120,9 +160,8 @@ bot.on('text', (ctx) => {
         }*/
        }
  
-    if (!(GRUPO in status)) {
+    if (!(GRUPO in status))
       return
-    } 
   
     switch(status[GRUPO].phase) {
       case 0:
@@ -136,7 +175,7 @@ bot.on('text', (ctx) => {
     }
   
     save()
-})
+}
 
 class juego {
   
@@ -144,7 +183,6 @@ constructor(groupid) {
   this.phase = 0
 
   this.pending = undefined
-  this.definitions = {}
   this.progress = 0
   this.word = undefined
   this.thinker = undefined
@@ -156,44 +194,57 @@ constructor(groupid) {
   this.contacteando = undefined
   this.fulltimeout = undefined
   this.GRUPO = groupid
+  this.iddel3 = undefined
+  this.colaVar = []
 }
   
 phase0(ctx, msgtext) {
   if (msgtext.includes("/newgame") && ctx.message.chat.type != "private") {
-      ctx.replyWithMarkdown("A new game has been started. Send me a word [privately](tg://user?id=504979973)")
-      this.GRUPO = ctx.message.chat.id
+      reply(ctx, "A new game has been started. Send me a word [privately](tg://user?id=504979973)")
+      //this.GRUPO = ctx.message.chat.id
       clearTimeout(this.fulltimeout)
       this.phase = 1
+  }
+  if (msgtext.includes("/status")) {
+    reply(ctx, "No game currently running")
   }
 }
 
 phase1(ctx, msgtext) {
     if (ctx.message.chat.type == "private") {
         if (!isAlpha(msgtext)) {
-          ctx.reply("Must be a single word with no symbols")
+          reply(ctx, "Must be a single word with no symbols")
         } else if (msgtext.match("^(super|inter|anti).*")) {
-          ctx.reply("Sin prefijos porfa")
+          reply(ctx, "Sin prefijos porfa")
         } else {
           this.word = msgtext
           this.thinker = ctx.message.from.id
+          if (msgtext == "debugdebug") this.thinker = 0
           //this.fulltimeout = setTimeout(this.timeout.bind(this), 960000)
           this.currentTime = new Date()
-          var s = mentionUser(ctx.message.from)
-          sendMessageMD(this.GRUPO, s + " pensó una palabra con " + cap1(this.word.slice(0, 1)))
-          ctx.reply("Word saved, the rest will try to guess it")
+          var s = su.mentionUser(ctx.message.from)
+          sendMessage(this.GRUPO, s + " pensó una palabra con *" + cap1(this.word.slice(0, 1)) + "*")
+          sendPToThinkerBot(this.word.slice(0, 1))
+          reply(ctx, "Word saved, the rest will try to guess it")
           this.phase = 2
           this.participants = new Set([])
+          logToFile(this.GRUPO + ": " + this.thinker + " pensó: " + this.word + "\n")
         }
     }
 }
 
 phase2(ctx, msgtext) {
-    if (msgtext.includes("/ff") && ctx.message.from.id == this.thinker) {
-        sendMessageMD(this.GRUPO, "The thinker has ended the game. The word was *" + this.word + "*")
-        this.win()
-    }
-    else if (msgtext.includes("/status")) {
-        ctx.replyWithMarkdown("*"+cap1(this.word.slice(0, this.progress + 1))+ "*")
+    if (msgtext.includes("/ff")) {
+        if (ctx.message.from.id == this.thinker || this.thinker == "BOT") {
+          var era = ""
+          if (this.progress > 0) era = "The word was *" + this.word + "*"
+          sendMessage(this.GRUPO, "The thinker has ended the game. " + era)
+          this.win()
+        } else {
+          reply(ctx, "You can't end this game")
+        }
+    } else if (msgtext.includes("/status")) {
+        this.front(true, ctx.message.chat.id)
     } else if (ctx.message.chat.type != "private") {
         this.groupMessage(ctx, msgtext)
     } else {
@@ -205,57 +256,96 @@ phase2(ctx, msgtext) {
 }
 
 privateMessage(ctx, msgtext) {
-  //console.log(this)
   if (/* */ ctx.message.from.id != this.thinker) {
         //Manda palabra a grupo
         if (ctx.message.from.id in this.awaiting) {
             if (eq(msgtext, this.awaiting[ctx.message.chat.id].text)) {
-              ctx.reply("La palabra no puede ser igual a la definición")
+              reply(ctx, "La palabra no puede ser igual a la definición")
             } else if (this.time != null) {
-              ctx.reply("Hay un contacto corriendo, si falla mandá de vuelta la definición")
+              reply(ctx, "Hay un contacto corriendo, si falla mandá de vuelta la definición")
             } else if (matchesAny(Array.from(this.burnt), this.awaiting[ctx.message.from.id].text)) {
-              ctx.reply("La palabra ya fue quemada")
+              reply(ctx, "La palabra ya fue quemada")
               delete this.awaiting[ctx.message.chat.id]
             } else if (msgtext.includes("/cancel")) {
               delete this.awaiting[ctx.message.chat.id]
             } else {
-              bot.telegram.forwardMessage(this.GRUPO, ctx.message.chat.id, ctx.message.message_id)
-              logToFile(""+ ctx.message.chat.id + ": " + this.awaiting[ctx.message.chat.id].text + "\n")
-              //this.answers = []
+              logToFile(this.GRUPO + ": " + ctx.message.chat.id + ": " + this.awaiting[ctx.message.chat.id].text + "\n")
+              
+              var x = this.answers.filter(a => !eq(a.text, this.awaiting[ctx.message.chat.id].text))
+              this.answers = x
+              
               this.answers.unshift({text: this.awaiting[ctx.message.chat.id].text,
                                     from: ctx.message.chat.id, 
                                     msgid: this.awaiting[ctx.message.chat.id].msgid,
                                     defid: ctx.message.message_id})
+              //bot.telegram.forwardMessage(this.GRUPO, ctx.message.chat.id, ctx.message.message_id)
+              this.front(false)
+              
+              if (this.thinker == "BOT")
+                sendToThinkerBot(msgtext, this.word.slice(0, this.progress + 1))
+              
+              console.log(this.answers)
               delete this.awaiting[ctx.message.chat.id]
               this.newParticipant(ctx.message.from.id)
             } 
             //showButton(ctx, GRUPO)
             //hideButtonFor(ctx, GRUPO, [thinker, ctx.message.chat.id])
         } else {
-            //console.log(this)
             this.onWordSentToBot(ctx, msgtext)
         }
     }
 }
+   
+onWordSentToBot(ctx, msgtext) {
+  //console.log(this)
+  if (msgtext.slice(0, this.progress + 1) != this.word.slice(0, this.progress + 1)) {
+    reply(ctx, "Your word must match the current progress ("+ cap1(this.word.slice(0, this.progress + 1)) + ")")
+  } else if (matchesAny(Array.from(this.burnt), msgtext)) {
+    reply(ctx, "That word is already burnt")
+  } else if (!isAlpha(msgtext)) {
+    reply(ctx, "Must be a single word with no symbols")
+  } else {
+    this.awaiting[ctx.message.from.id] = {text: msgtext, msgid:ctx.message.message_id}
+    reply(ctx, "Cool, now send me the definition, or /cancel to be able to send a different word")
+  }
+}
 
 groupMessage(ctx, msgtext) {
+  
     if (ctx.message.from.id == this.thinker) {
-          //console.log(this.answers)
+          if (msg.includes == "/bueno_casi") {
+              logToFile(this.GRUPO + ": Match manual\n"); 
+              this.progress += 1
+              sendPToThinkerBot(this.progress)
+              //this.time = undefined
+              var x = this.answers.filter(a => a.text.slice(0, this.progress + 1) == this.word.slice(0, this.progress + 1))
+              this.answers = x
+              for (var key in Object.keys(this.awaiting)) {
+                try {
+                if (this.awaiting[key].text.slice(0, this.progress + 1) != this.word.slice(0, this.progress + 1))
+                  delete this.awaiting[key]
+                } catch (error) {
+                  console.log("Can't delete " + key)
+                }
+              }
+              this.front(true)
+          }
           if (eq(msgtext, this.word)) {
               //No se puede quemar la propia
           }
           else if (this.answers.length > 0 && eq(this.answers[0].text, msgtext)) {
-              logToFile("" + this.thinker + " burnt a word from " + this.answers[0].from + "\n")
-              //this.answers.shift()
-              ctx.reply("Quemada")
-              this.burnt.add(msgtext)
-              this.acceptingAnswer = false
-              this.time = undefined
-              clearTimeout(pending)
-              setTimeout(this.onBurnOrNoMatch.bind(this), 1500)
-              this.answers.shift()
-              console.log(this.answers)
+              this.burnword(ctx, msgtext)
           }
+    }
+    else if (msgtext.includes("/send_to_back")) {
+        if (this.answers.length === 0) return;  
+        this.answers.push(this.answers[0])
+        this.answers.shift()
+        this.front(false)
+    }
+    else if (msgtext.includes("/withdraw") && this.answers.length != 0 && ctx.message.from.id == this.answers[0].from) {
+        this.answers.shift()
+        this.front(false)
     }
     else if (!this.acceptingAnswer && eq(msgtext, this.word))  {
         //Mandaron la palabra al grupo
@@ -263,18 +353,23 @@ groupMessage(ctx, msgtext) {
         this.win()
     }
     else if (this.acceptingAnswer && ctx.message.from.id == this.contacteando) {
-        this.contacteando = undefined
-        this.time = undefined
-        clearTimeout(pending)
-        if (eq(msgtext, this.word)) {
-            this.forwardAnswer()
-            ctx.reply("Sí, era esa")
-            this.win()
-        }
-        else if (eq(msgtext, this.answers[0].text)) { //&& answers[msgtext] != ctx.message.from.id
+        /*console.log(ctx.message.date*1000)
+        console.log(this.acceptingAnswer)
+        if (ctx.message.date < Math.floor(this.acceptingAnswer/1000)) {
+          console.log(ctx.message.date*1000)
+          console.log(this.acceptingAnswer)
+          return
+        }*/
+        if (this.iddel3 == undefined) {
+          this.colaVar.unshift([ctx, msgtext])
+        } else if (this.iddel3 < ctx.message.message_id) {
+          this.burnt.add(msgtext)
+          this.forwardAnswer()
+          if (eq(msgtext, this.answers[0].text)) { //&& answers[msgtext] != ctx.message.from.id
             this.onMatch(ctx, msgtext)
-        } else {
-            this.onNoMatch(ctx, msgtext)
+          } else {
+            this.onNoMatch(ctx, msgtext)         
+          }
         }
     }
     else if (msgtext.includes("/contacto") && this.time == null) {
@@ -282,7 +377,7 @@ groupMessage(ctx, msgtext) {
         if (this.answers[0].from == ctx.message.from.id) return;
             //Chequea que no esté haciendo contacto consigo mismo
         this.time = 0
-        var pending = setTimeout(this.secondElapsed.bind(this), 1000)
+        this.pending = setTimeout(this.secondElapsed.bind(this), 1000)
         this.contacteando = ctx.message.from.id
         this.newParticipant(ctx.message.from.id)
     }
@@ -291,137 +386,154 @@ groupMessage(ctx, msgtext) {
         console.log("DEBUG: I am currently listening for answers")
     }
 }
-
+  
 secondElapsed() {
-    console.log("SE")
-    console.log(this.answers)
     if (this.time == undefined) return
     this.time += 1
-    bot.telegram.sendMessage(this.GRUPO, this.time)
+    console.log("SE")
+    bot.telegram.sendMessage(this.GRUPO, this.time).then((message) => {
+      if (this.time == 3) {
+        this.iddel3 = message.message_id
+        console.log(this.iddel3)
+        for (var i = 0; i < this.colaVar.length; i++) {
+          if (this.iddel3 < this.colaVar[i][0].message.message_id) {
+            console.log("VS")
+            console.log(this.colaVar[i][0].message.message_id)
+            var ctx = this.colaVar[i][0]
+            var msgtext = this.colaVar[i][1]
+            this.burnt.add(msgtext)
+            this.forwardAnswer()
+            if (eq(msgtext, this.answers[0].text)) { //&& answers[msgtext] != ctx.message.from.id
+              this.onMatch(ctx, msgtext)
+            } else {
+              this.onNoMatch(ctx, msgtext)         
+            }
+          }
+        }
+        this.colaVar = []
+      } else this.iddel3 = undefined
+    })
     if (this.time < 3)
         this.pending = setTimeout(this.secondElapsed.bind(this), 1000)
     else {
-        this.acceptingAnswer = true
+        console.log("Open")
+        this.acceptingAnswer = new Date() - 0
         this.pending = setTimeout(this.writeAnswer.bind(this), 5000)
     }
 }
 
 writeAnswer() {
-  console.log("WA")
-  console.log(this.answers)
+  //console.log("WA")
   if (this.time == undefined) return
-  clearTimeout(this.pending)
+  //clearTimeout(this.pending)
+  this.forwardAnswer()
   if (this.acceptingAnswer) {
-      this.contacteando = undefined
-      this.acceptingAnswer = false
-      this.forwardAnswer()
-      var key = this.answers[0].text
-      if (eq(key, this.word)) {
-          this.win()
-          bot.telegram.sendMessage(this.GRUPO, "Sí, era esa")
-      } else {
-          bot.telegram.sendMessage(this.GRUPO, "Tardaste mucho")
-          setTimeout(this.onBurnOrNoMatch.bind(this), 1500)
-          console.log(this.answers)
-          this.answers.shift()
-          this.burnt.add(key)
-      }
+      this.endContacto(undefined, false)
+      if (this.phase == 2) 
+        sendMessage(this.GRUPO, "Tardaste mucho")
   }
 }
 
 onMatch(ctx, msgtext) {
-  this.acceptingAnswer = false
-  this.time = undefined
+  logToFile(this.GRUPO + ": Match entre P: " + this.answers[0].from + " A: " + ctx.message.from.id + "\n"); 
   this.progress += 1
-  this.burnt.add(msgtext)
-  this.forwardAnswer()
-  logToFile("Match entre P: " + this.answers[0].from + " A: " + ctx.message.from.id + "\n"); 
-  setTimeout(this.nextLetter.bind(this), 1500)
-  this.answers = []
-  this.awaiting = {}
-}
-
-onWordSentToBot(ctx, msgtext) {
-  //console.log(this)
-  if (msgtext.slice(0, this.progress + 1) != this.word.slice(0, this.progress + 1)) {
-    ctx.reply("Your word must match the current progress ("+ cap1(this.word.slice(0, this.progress + 1)) + ")")
-  } else if (matchesAny(Array.from(this.burnt), msgtext)) {
-    ctx.reply("That word is already burnt")
-  } else if (!isAlpha(msgtext)) {
-    ctx.reply("Must be a single word with no symbols")
-  } else {
-    this.awaiting[ctx.message.from.id] = {text: msgtext, msgid:ctx.message.message_id}
-    ctx.reply("Cool, now send me the definition, or /cancel to be able to send a different word")
+  sendPToThinkerBot(this.progress)
+  this.endContacto(msgtext, true)
+  //this.time = undefined
+  var x = this.answers.filter(a => a.text.slice(0, this.progress + 1) == this.word.slice(0, this.progress + 1))
+  this.answers = x
+  for (var key in Object.keys(this.awaiting)) {
+    try {
+    if (this.awaiting[key].text.slice(0, this.progress + 1) != this.word.slice(0, this.progress + 1))
+      delete this.awaiting[key]
+    } catch (error) {
+      console.log("Can't delete " + this.awaiting[key])
+    }
   }
 }
 
 onNoMatch(ctx, msgtext) {
-  this.acceptingAnswer = false
-  this.forwardAnswer()
-  var key = this.answers[0].text
-  logToFile("No match entre P: " + this.answers[0].from + " A: " + ctx.message.from.id + "\n"); 
-  this.burnt.add(msgtext)
-  this.burnt.add(key)
-  if (eq(key, this.word)) {
-      this.win()
-      bot.telegram.sendMessage(this.GRUPO, "Sí, era esa")
-  } else {
-      setTimeout(this.onBurnOrNoMatch.bind(this), 1500)
-      this.answers.shift()
-      console.log(this.answers)
-  }
-  //this.answers.shift()
-  //setTimeout(this..bind(this), 1500)
+  logToFile(this.GRUPO + ": No match entre P: " + this.answers[0].from + " A: " + ctx.message.from.id + "\n")
+  this.endContacto(msgtext, false)
 }
   
-onBurnOrNoMatch() {
+burnword(ctx, msgtext) {
+  logToFile(this.GRUPO + ": " + this.thinker + " burnt a word from " + this.answers[0].from + "\n")
+  reply(ctx, "Quemada")
+  this.endContacto(undefined, false)
+}
+  
+endContacto(guess, showNextLetter) {
+  this.colaVar = []
+  this.contacteando = undefined
   this.time = undefined
-  if (this.answers.length == 0) {
+  clearTimeout(this.pending)
+  this.acceptingAnswer = false
+  if (eq(guess, this.word) || eq(this.answers[0].text, this.word)) {
+    sendMessage(this.GRUPO, "Sí, era esa")
+    this.win()
+    return
+  }
+  this.burnt.add(this.answers[0].text)
+  this.answers.shift()
+  setTimeout(this.front.bind(this, showNextLetter), 1000)
+}
+  
+front(showNextLetter, dst) {
+  if (this.answers.length != 0) {
+    if (dst == undefined) dst = this.GRUPO
+    if (this.answers[0].from == "BOT") requestDefinition()
+    else bot.telegram.forwardMessage(dst, this.answers[0].from, this.answers[0].defid)
+  } if (this.answers.length == 0 || showNextLetter) {
     this.nextLetter()
-  } else {
-    bot.telegram.forwardMessage(this.GRUPO, this.answers[0].from, this.answers[0].defid)
   }
 }
 
 forwardAnswer() {
-  bot.telegram.forwardMessage(this.GRUPO, this.answers[0].from, this.answers[0].msgid)
+  if (this.answers[0].from == "BOT") requestAnswer()
+  else bot.telegram.forwardMessage(this.GRUPO, this.answers[0].from, this.answers[0].msgid)
 }
 
 nextLetter() {
-  sendMessageMD(this.GRUPO, "*" + cap1(this.word.slice(0, this.progress + 1)) + "*")
+  sendMessage(this.GRUPO, "*" + cap1(this.word.slice(0, this.progress + 1)) + "*")
   if (this.word == this.word.slice(0, this.progress + 1)) {
-      bot.telegram.sendMessage(this.GRUPO, "Bueno, es esa")
+      sendMessage(this.GRUPO, "Bueno, es esa")
       this.win()
   }
 }
 
 sendMessageDelay (text, delay) {
-    setTimeout(bot.telegram.sendMessage(this.GRUPO, text).bind(this), delay)
+    setTimeout(sendMessage(this.GRUPO, text).bind(this), delay)
 }
   
 newParticipant(id) {
+  if (this.participants == null) this.participants = new Set([])
   var prevSize = this.participants.size
   this.participants.add(id)
   if (prevSize == 1 && this.participants.size > 1) {
-      this.fulltimeout = setTimeout(this.timeout.bind(this), 960000)
-      bot.telegram.sendMessage(-258588711, "Timer started")
+      this.fulltimeout = setTimeout(this.timeout.bind(this), TOTAL_TIME*1000)
+      sendMessage(-258588711, "Timer started")
       this.currentTime = new Date()
   }
 }
 
 timeout() {
     if (this.phase == 2) {
-      sendMessageMD(this.GRUPO, "Se acabó el tiempo! El [thinker](tg://user?id=" + this.thinker + ") ganó. La palabra era *" + cap1(this.word) + "*")
+      var era = ""
+      if (this.progress > 0) era = "La palabra era *" + cap1(this.word) + "*"
+      sendMessage(this.GRUPO, "Se acabó el tiempo! El [thinker](tg://user?id=" + this.thinker + ") ganó. "+ era)
       clearTimeout(this.pending)
-      this.time == undefined
+      this.time = undefined
     }
     this.phase = 0
     save()
 }
   
 win() {
-  var s = "" + 60*16 - parseInt((new Date() - this.currentTime) / 1000) + " segundos"
-  bot.telegram.sendMessage(this.GRUPO, "Tiempo restante: " + s)
+  var s = "" + TOTAL_TIME - parseInt((new Date() - this.currentTime) / 1000) + " segundos"
+  if (this.participants != null && this.participants.size > 1) sendMessage(this.GRUPO, "Tiempo restante: " + s)
+  clearTimeout(this.pending)
+  this.time = undefined
   this.phase = 0
 }
 
@@ -437,13 +549,11 @@ var save = () => {
     status2[grupo].thinker = status[grupo].thinker,
     status2[grupo].phase = status[grupo].phase
   }
-  console.log(status2)
-  fs.writeFile("./status.txt", JSON.stringify(status2), function(err) {});
+  fs.writeFile("./status.txt", JSON.stringify(status2, null, 4), function(err) {});
 }
 
 var restore = () => {
   var buffer = fs.readFileSync("./status.txt", 'utf8');
-  console.log(buffer)
   try {
     var status2 = JSON.parse(buffer)
     for (var grupo in status2) {
@@ -455,48 +565,30 @@ var restore = () => {
         status[grupo].currentTime = new Date(),
         status[grupo].thinker = status2[grupo].thinker,
         status[grupo].phase = status2[grupo].phase
-        status[grupo].fulltimeout = setTimeout(status[grupo].timeout.bind(status[grupo]), 16*60*1000)
-        bot.telegram.sendMessage(-258588711, "Game restored")
+        status[grupo].fulltimeout = setTimeout(status[grupo].timeout.bind(status[grupo]), TOTAL_TIME*1000)
+        sendMessage(-258588711, "Game restored")
       }
     }
   } catch (error) {
     console.log("Error leyendo status")
   }
 }
-
-var mentionUser = (user) => {
-  if (user.username)
-      return "@" + user.username
-  return "[" + user.first_name + "](tg://user?id=" + user.id + ")"
-}
-
-var sendMessageMD = (chat, text) => {
-  bot.telegram.sendMessage(chat, text, {parse_mode:"Markdown"})
-}
-                           
-var cap1 = (string) => {
-  return string.toUpperCase()
+                    
+var cap1 = (string) =>
+  string.toUpperCase()
   //return string.charAt(0).toUpperCase() + string.slice(1)
-}
 
-var logToFile = (string) => {
+var logToFile = (string) =>
   fs.appendFile("./record.txt", string, function(err) {}); 
-}
 
-var matchesAny = function(array, string) {
-  return array.some((elem) => eq(elem, string))
-}
+var matchesAny = (array, string) =>
+  array.some((elem) => eq(elem, string))
 
-const isAlpha = ch => {
-  for (var i = 2; i < ch.length; i++) {
-      if (ch.charAt(i) == ch.charAt(i - 1) && ch.charAt(i) == ch.charAt(i - 2)) {
-        return false
-      }
-  }
-	return ch.match(/^[a-zñáéíóúü]+$/i) !== null && ch.length >= 2;
-}
+const isAlpha = ch =>
+	su.isAlpha(ch) && !su.hasXinARow(ch, 3) && ch.length >= 2;
 
 var eq = function(string1, string2) {
+  if (string1 == null || string2 == null) return false
   return eqasim(string1, string2) || eqasim(string2, string1)
 }
 
@@ -509,52 +601,55 @@ var eqasim = function(string1, string2) {
     || string1.slice(0, string1.length-1) == string2 + "ante";
 }
 
-var saveRelation = (idperson, idchat) => {
-  var buffer = fs.readFileSync("./groups.txt", 'utf8');
-  console.log(buffer)
-  try {
-    groups = JSON.parse(buffer)
-    if (idperson in groups) {
-      if (groups[idperson].indexOf(idchat) == -1) {
-        groups[idperson].push(idchat)
-      }
-    } else {
-      groups[idperson] = [idchat]
-    } 
-    fs.writeFile("./groups.txt", JSON.stringify(groups), function(err) {});
-  } catch (error) {
-    console.log("Error leyendo grupos")
-  }
-}
-
 bot.on('left_chat_member', (ctx) => {
-    //path = process.cwd();
-    var buffer = fs.readFileSync("./groups.txt", "utf8");
-    groups = JSON.parse(buffer)
-    var left = ctx.message.left_chat_participant.id
-    if (left == 504979973)
-      for (var key in groups) {
-        rmRelation(key, ctx.message.chat.id)
-      }
-    else
-      rmRelation(left, ctx.message.chat.id)
-    fs.writeFile("./groups.txt", JSON.stringify(groups), function(err) {});
+    gm.onLeftChatMember(ctx)
 })
 
-var rmRelation = (idperson, idchat) => {
-    if (idperson in groups) {
-      var index = groups[idperson].indexOf(idchat)
-      if (index != -1) {
-        groups[idperson].splice(index, 1)
-      }
-    } 
-}
-
 var activeGroups = (idperson) => {
+    var groups = gm.groups()
     if (idperson in groups)
-      return Array.from(groups[idperson]).filter((g) => g in status && status[g].phase > 0)
+      return Array.from(groups[idperson]).filter(g => g in status && status[g].phase > 0)
     else return []
 }
+
+var desambiguar = (idperson, msgtext) => {
+    var ag = activeGroups(idperson)
+    if (ag.length <= 1) return ag
+    var groups2 = ag.filter(g => status[g].phase == 2 && status[g].thinker != idperson)
+    var awaiting = groups2.filter(g => idperson in status[g].awaiting)
+    if (awaiting.length >= 1) return awaiting
+    var matching = groups2.filter(g =>
+      (msgtext.slice(0, status[g].progress + 1) == status[g].word.slice(0, status[g].progress + 1)))
+    if (matching.length >= 1) return matching
+    return ag.filter(g => status[g].phase == 1)
+}
+
+var sendMessage = (chat, message) => {
+  msg.sendMessage(chat, message)
+}
+
+var reply = (ctx, message) => {
+  msg.reply(ctx, message)
+}
+
+var sendToThinkerBot = (text, progress) => {
+  text = text.replace(/ /g, "+")
+  console.log("http://contacto-bot-ai.glitch.me/direct?msg=" + text + "&progress=" + progress)
+  http.get("http://contacto-bot-ai.glitch.me/direct?msg=" + text + "&progress=" + progress);
+}
+
+var sendPToThinkerBot = (progress) => {
+  http.get("http://contacto-bot-ai.glitch.me/progress?" + "&progress=" + progress);
+}
+
+var requestDefinition = () => {
+  http.get("http://contacto-bot-ai.glitch.me/definition");
+}
+
+var requestAnswer = () => {
+  http.get("http://contacto-bot-ai.glitch.me/answer");
+}
+
 
 bot.startPolling()
 
@@ -563,7 +658,39 @@ const express = require('express');
 const app = express();
 app.get("/", (request, response) => {
   console.log(Date.now() + " Ping Received");
-  response.sendStatus(200);
+  response.sendStatus(200)
+});
+app.get("/think/", (request, response) => {
+  var group = request.query.chat
+  console.log(group)
+  if (status[group].phase != 1) return
+  status[group].word = request.query.msg
+  status[group].thinker = "BOT"
+  status[group].currentTime = new Date()
+  sendMessage(group, "El bot pensó una palabra con " + cap1(status[group].word.slice(0, 1)))
+  status[group].phase = 2
+  status[group].participants = new Set([])
+});
+app.get("/define/", (request, response) => {
+  var group = request.query.chat
+  var word = request.query.msg
+  console.log(group)
+  if (status[group].phase != 2) return
+  status[group].answers.unshift({text: word,
+                                 from: "BOT", //O sea, capaz puedo hacer que forwardee del grupo al desapilar?? 
+                                })
+  
+});
+app.get("/burn/", (request, response) => {
+  var group = request.query.chat
+  var ctx = {}
+  ctx.message = {}
+  ctx.message.from = {id: "BOT"} //800511518
+  ctx.message.chat = {id: group}
+  if (eq(request.query.msg, status[group].answers[0].text))
+    response.sendStatus(200)
+  else response.sendStatus(204)
+  if (group in status) status[group].groupMessage(ctx, request.query.msg)
 });
 app.listen(process.env.PORT);
 setInterval(() => {

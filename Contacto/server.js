@@ -13,8 +13,11 @@ var progress = 0
 var word = undefined
 var thinker = undefined
 var time = undefined
-var acceptingAnswer = false
-var awaiting = {}
+var acceptingAnswer = 0
+// 0 = No acabamos de hacer contacto 1 2 3
+// 1 = Ninguno de los dos hablo
+// 2 = Uno de los dos habló
+var saidAnswer = undefined
 var answers = {}
 var burnt = new Set([])
 
@@ -48,8 +51,8 @@ bot.on('text', (ctx) => {
         word = undefined
         thinker = undefined
         time = undefined
-        acceptingAnswer = false
-        awaiting = {}
+        acceptingAnswer = 0
+        saidAnswer = undefined
         answers = {}
         burnt = new Set([])
     }
@@ -60,22 +63,51 @@ bot.on('text', (ctx) => {
         thinker = ctx.message.from.id
         phase = 2
     }
-    else if (phase == 2 && acceptingAnswer && /*ctx.message.from.id != thinker && */ctx.message.chat.type == "group") {
+    else if (phase == 2 && acceptingAnswer == 1 && /*ctx.message.from.id != thinker && */ctx.message.chat.type == "group") {
         if (msgtext == word) {
             clearTimeout(pending)
+            acceptingAnswer = 0
+            saidAnswer = undefined
+            ctx.reply("Fin")
+            phase = 0
+        } else {
+            if (msgtext.slice(0, progress + 1) != word.slice(0, progress + 1)) {
+                ctx.reply("Your word must match the current progress")
+            } else if (burnt.has(msgtext)) {
+                ctx.reply("That word is already burnt")
+            } else {
+                clearTimeout(pending)
+                acceptingAnswer = 0
+                saidAnswer = undefined
+                time = undefined
+                progress += 1
+                ctx.reply(word.slice(0, progress + 1))
+            }
+        }
+    }
+    else if (phase == 2 && acceptingAnswer == 2 && /*ctx.message.from.id != thinker && */ctx.message.chat.type == "group") {
+        if (msgtext == word) {
+            clearTimeout(pending)
+            acceptingAnswer = 0
+            saidAnswer = undefined
             ctx.reply("Fin")
             phase = 0
         }
-        else if (msgtext in answers /*&& answers[msgtext] != ctx.message.from.id*/) {
-            clearTimeout(pending)
-            acceptingAnswer = false
-            time = undefined
-            progress += 1
-            ctx.reply(word.slice(0, progress + 1))
-            answers = {}
+        else if (msgtext == saidAnswer /*&& answers[msgtext] != ctx.message.from.id*/) {
+            if (msgtext.slice(0, progress + 1) != word.slice(0, progress + 1)) {
+                ctx.reply("Your word must match the current progress")
+            } else if (burnt.has(msgtext)) {
+                ctx.reply("That word is already burnt")
+            } else {
+                clearTimeout(pending)
+                acceptingAnswer = 0
+                saidAnswer = undefined
+                time = undefined
+                progress += 1
+                ctx.reply(word.slice(0, progress + 1))
+            }
         } else {
-            ctx.reply("Debug message 1")
-            // Yo no sé a cuál le está intentando pegar
+            //ctx.reply("Debug message 1")
         }
     }
     else if (phase == 2 && msgtext.includes("/contacto") && /*ctx.message.from.id != thinker &&*/ ctx.message.chat.type == "group"
@@ -84,32 +116,11 @@ bot.on('text', (ctx) => {
         var pending = setTimeout(secondElapsed, 1000)
         //Chequear que no esté haciendo contacto consigo mismo
     }
-    else if (phase == 2 && ctx.message.chat.type != "group"/* && ctx.message.from.id != thinker*/) {
-        if (ctx.message.from.id in awaiting) {
-            bot.telegram.forwardMessage(GRUPO, ctx.message.chat.id, ctx.message.message_id)
-            answers[awaiting[ctx.message.chat.id]] = ctx.message.chat.id
-            delete awaiting[ctx.message.chat.id]
-        } else {
-            if (msgtext.slice(0, progress + 1) != word.slice(0, progress + 1)) {
-                ctx.reply("Your word must match the current progress")
-            } else if (burnt.has(msgtext)) {
-                ctx.reply("That word is already burnt")
-            } else {
-                awaiting[ctx.message.from.id] = msgtext
-                ctx.reply("Cool, now send me the definition")
-            }
-        }
-    }
-    else if (phase == 2 && ctx.message.chat.type == "group" /*&& ctx.message.from.id == thinker*/) {
+    else if (phase == 2 && ctx.message.chat.type == "group" && ctx.message.from.id == thinker) {
         if (msgtext == word) {
             //No se puede quemar la propia
-        }
-        else if (msgtext in answers) {
-            ctx.reply("Quemada")
+        } else {
             burnt.add(msgtext)
-            clearTimeout(pending)
-            acceptingAnswer = false
-            time = undefined
         }
     }
     else if (phase == 2 && acceptingAnswer) {
